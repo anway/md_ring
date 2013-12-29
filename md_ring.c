@@ -10,7 +10,7 @@ FILE* fin = fopen("in.txt", "r");
 FILE* fout = fopen("out.txt", "w");
 
 // input vars
-float zpos, ang_0, pot_lj_s, pot_lj_e, pot_hs_k, pot_hs_r, delt, tmax, temp, temprqs, ztoler;
+float zpos, ang_0, pot_lj_s, pot_lj_e, pot_hs_k, pot_hs_r, delt, tmax, temp, tequil, ztoler;
 int iseed, nsamp;
 
 // ring positions
@@ -31,6 +31,32 @@ float randfrac()
     return (double)rand() / (double)RAND_MAX;
 }
 
+
+/*
+ Rescale velocities to right temp
+ */
+temprescale()
+{
+    int sumv2=0, scale;
+    for (i=0; i<=6; i++)
+    {
+        for (j=0; j<3; j++)
+        {
+            sumv2 += pow(vring1[j][i], 2.0) + pow(vring2[j][i], 2.0);
+        }
+    }
+    sumv2 /= 14.0;
+    scale = sqrt(3.0 * temp / sumv2);
+    for (i=0; i<=6; i++)
+    {
+        for (j=0; j<3; j++)
+        {
+            vring1[j][i] = (vring1[j][i] - vcm[j]) * scale;
+            vring2[j][i] = (vring2[j][i] - vcm[j]) * scale;
+        }
+    }
+}
+
 /*
  Read in values and initialize positions and velocities
  */
@@ -41,7 +67,7 @@ void init()
     fscanf(fin, "%f %f", &pot_lj_s, &pot_lj_e);
     fscanf(fin, "%f %f", &pot_hs_k, &pot_hs_r);
     fscanf(fin, "%d %d", &iseed, &nsamp);
-    fscanf(fin, "%f %f %f %f", &delt, &tmax, &temp, &temprqs, &ztoler);
+    fscanf(fin, "%f %f %f %f", &delt, &tmax, &temp, &tequil, &ztoler);
     
     // more initializing
     srand(iseed);
@@ -69,31 +95,15 @@ void init()
     }
     
     // initialize velocities
-    int sumv2=0, scale;
-    for (i=0; i<3; i++)
-    vcm[i]=0;
     for (i=0; i<=6; i++)
     {
         for (j=0; j<3; j++)
         {
             vring1[j][i] = randfrac() - 0.5;
             vring2[j][i] = randfrac() - 0.5;
-            vcm[j] += vring1[j][i] + vring2[j][i];
-            sumv2 += pow(vring1[j][i], 2.0) + pow(vring2[j][i], 2.0);
         }
     }
-    for (i=0; i<3; i++)
-    vcm[j] /= 14.0;
-    sumv2 /= 14.0;
-    scale = sqrt(3.0 * temp / sumv2);
-    for (i=0; i<=6; i++)
-    {
-        for (j=0; j<3; j++)
-        {
-            vring1[j][i] = (vring1[j][i] - vcm[j]) * scale;
-            vring2[j][i] = (vring2[j][i] - vcm[j]) * scale;
-        }
-    }
+    temprescale();
 }
 
 /*
@@ -125,19 +135,33 @@ void force()
             d10 += sqrt(pow(ring1[j][i]-ring1[j][0], 2.0));
         }
         v1 += pot_hs_k * pow(pot_hs_r - d10, 2.0);
-        fxring1[i] += copysign(2.0 * pot_hs_k * (pot_hs_r - d10), ring1[j][0] - ring1[j][i]);
-        fxring1[0] += copysign(2.0 * pot_hs_k * (pot_hs_r - d10), ring1[j][i] - ring1[j][0]);
+        fxring1[i] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[0][0] - ring1[0][i]) / d10;
+        fxring1[0] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[0][i] - ring1[0][0]) / d10;
+        fyring1[i] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[1][0] - ring1[1][i]) / d10;
+        fyring1[0] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[1][i] - ring1[1][0]) / d10;
+        fzring1[i] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[2][0] - ring1[2][i]) / d10;
+        fzring1[0] += 2.0 * pot_hs_k * abs(d10 - pot_hs_r) * (ring1[2][i] - ring1[2][0]) / d10;
         if (i==6)
         {
             d11 = sqrt(pow(ring1[j][i]-ring1[j][1], 2.0));
             v1 += pot_hs_k * pow(pot_hs_r - d11, 2.0);
-            fxring1[i] +=
-            fxring1[1] +=
+            fxring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[0][1] - ring1[0][i]) / d11;
+            fxring1[1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[0][i] - ring1[0][1]) / d11;
+            fyring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[1][1] - ring1[1][i]) / d11;
+            fyring1[1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[1][i] - ring1[1][1]) / d11;
+            fzring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[2][1] - ring1[2][i]) / d11;
+            fzring1[1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[2][i] - ring1[2][1]) / d11;
         }
         else
         {
             d11 = sqrt(pow(ring1[j][i]-ring1[j][i+1], 2.0));
             v1 += pot_hs_k * pow(pot_hs_r - d11, 2.0);
+            fxring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[0][i+1] - ring1[0][i]) / d11;
+            fxring1[i+1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[0][i] - ring1[0][i+1]) / d11;
+            fyring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[1][i+1] - ring1[1][i]) / d11;
+            fyring1[i+1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[1][i] - ring1[1][i+1]) / d11;
+            fzring1[i] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[2][i+1] - ring1[2][i]) / d11;
+            fzring1[i+1] += 2.0 * pot_hs_k * abs(d11 - pot_hs_r) * (ring1[2][i] - ring1[2][i+1]) / d11;
         }
     }
     // interactions in second ring
@@ -151,16 +175,34 @@ void force()
             d20 += sqrt(pow(ring2[j][i]-ring2[j][0], 2.0));
         }
         v2 += pot_hs_k * pow(pot_hs_r - d20, 2.0);
+        fxring2[i] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[0][0] - ring2[0][i]) / d20;
+        fxring2[0] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[0][i] - ring2[0][0]) / d20;
+        fyring2[i] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[1][0] - ring2[1][i]) / d20;
+        fyring2[0] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[1][i] - ring2[1][0]) / d20;
+        fzring2[i] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[2][0] - ring2[2][i]) / d20;
+        fzring2[0] += 2.0 * pot_hs_k * abs(d20 - pot_hs_r) * (ring2[2][i] - ring2[2][0]) / d20;
         if (i==6)
         {
             d21 = sqrt(pow(ring2[j][i]-ring2[j][1], 2.0));
+            v2 += pot_hs_k * pow(pot_hs_r - d21, 2.0);
+            fxring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[0][1] - ring2[0][i]) / d21;
+            fxring2[1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[0][i] - ring2[0][1]) / d21;
+            fyring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[1][1] - ring2[1][i]) / d21;
+            fyring2[1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[1][i] - ring2[1][1]) / d21;
+            fzring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[2][1] - ring2[2][i]) / d21;
+            fzring2[1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[2][i] - ring2[2][1]) / d21;
         }
         else
         {
             d21 = sqrt(pow(ring2[j][i]-ring2[j][i+1], 2.0));
+            v2 += pot_hs_k * pow(pot_hs_r - d21, 2.0);
+            fxring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[0][i+1] - ring2[0][i]) / d21;
+            fxring2[i+1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[0][i] - ring2[0][i+1]) / d21;
+            fyring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[1][i+1] - ring2[1][i]) / d21;
+            fyring2[i+1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[1][i] - ring2[1][i+1]) / d21;
+            fzring2[i] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[2][i+1] - ring2[2][i]) / d21;
+            fzring2[i+1] += 2.0 * pot_hs_k * abs(d21 - pot_hs_r) * (ring2[2][i] - ring2[2][i+1]) / d21;
         }
-        v2curr = pot_hs_k * pow(pot_hs_r - d21, 2.0);
-        v2 += v2curr;
     }
     // interactions between rings
     float d3, r3_6, r3_12;
@@ -175,11 +217,42 @@ void force()
             }
             r3_6 = pow(pot_lj_s / d3, 6.0);
             r3_12 = r3_6 * r3_6;
-            v3curr = pot_lj_e * (r3_12 - r3_6);
-            v3 += v3curr;
+            v3 += pot_lj_e * (r3_12 - r3_6);
+            r3_8 = pow(pot_lj_s / d3, 8.0);
+            fxring1[i] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring1[0][i] - ring2[0][j]);
+            fxring2[j] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring2[0][j] - ring1[0][i]);
+            fyring1[i] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring1[1][i] - ring2[1][j]);
+            fyring2[j] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring2[1][j] - ring1[1][i]);
+            fzring1[i] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring1[2][i] - ring2[2][j]);
+            fzring2[j] += 12 * pot_lj_e * (r3_6 * r3_8 - 0.5 * r3_8) * (ring2[2][j] - ring1[2][i]);
         }
     }
 
+}
+
+/*
+ Find next positions
+ */
+void solve()
+{
+    int i, j;
+    for (i=0; i<=6; i++)
+    {
+        vring1[0][i] += delt * fxring1[i];
+        vring1[1][i] += delt * fyring1[i];
+        vring1[2][i] += delt * fzring1[i];
+        for (j=0; j<3; j++)
+        {
+            ring1[j][i] += delt * vring1[j][i];
+        }
+        vring2[0][i] += delt * fxring2[i];
+        vring2[1][i] += delt * fyring2[i];
+        vring2[2][i] += delt * fzring2[i];
+        for (j=0; j<3; j++)
+        {
+            ring2[j][i] += delt * vring2[j][i];
+        }
+    }
 }
 
 /*
@@ -187,17 +260,7 @@ void force()
  */
 void sample()
 {
-    int i, j;
-    float zav=0.0;
-    for (i=0; i<=6; i++)
-    {
-        zav += ring2[2][i] - ring1[2][i];
-    }
-    zav /= 6.0;
-    if (abs(zav-zpos) < ztoler) then
-    {
-        ztot += zav;
-    }
+
 }
 
 int main(void)
@@ -205,13 +268,21 @@ int main(void)
     init();
     
     int step=0, time=0, nstep = (int) tmax / delt;
-    // parameters of interest
-    float z[nstep], v3[nstep], ztot, v3tot, zdev, v3dev;
                
     do {
         force();
-        sample();
+        solve();
+        time += delt;
+        if (time < tequil)
+        {
+            if (time / delt % 20 == 0)
+                temprescale();
+        }
+        else if ( time / delt % 14 == 0)
+            sample();
     } while (time < tmax);
+    
+    // write things of interest to file
     
     return 0;
 }
