@@ -6,7 +6,7 @@
 #define PI 3.14159265358979323846
 
 // input vars
-float zpos, ang_0, pot_lj_s, pot_lj_e, pot_hs_k, pot_hs_r, delt, tmax, temp, tequil, ztoler;
+float ang_0, pot_lj_s, pot_lj_e, pot_hs_k, pot_hs_r, k2, z0, delt, tmax, temp, tequil;
 int iseed;
 
 // ring positions
@@ -17,7 +17,7 @@ float vring1[3][7], vring2[3][7];
 float vcm[3];
 
 // other global vars
-float v1=0, v2=0, v3=0, fxring1[7], fxring2[7], fyring1[7], fyring2[7], fzring1[7], fzring2[7];
+float v1=0.0, v2=0.0, v3=0.0, v12=0.0, fxring1[7], fxring2[7], fyring1[7], fyring2[7], fzring1[7], fzring2[7];
 
 /*
  Generate a random number between 0 and 1
@@ -25,6 +25,22 @@ float v1=0, v2=0, v3=0, fxring1[7], fxring2[7], fyring1[7], fyring2[7], fzring1[
 float randfrac()
 {
     return (double)rand() / (double)RAND_MAX;
+}
+
+/*
+ Generate random number from Gaussian distribution
+ */
+float randgauss()
+{
+    float x1, x2, w, y1, y2;
+    
+    do {
+        x1 = 2.0 * randfrac() - 1.0;
+        x2 = 2.0 * randfrac() - 1.0;
+        w = x1 * x1 + x2 * x2;
+    } while ( w >= 1.0 );
+    
+    return x1 * sqrt( (-2.0 * log( w ) ) / w );
 }
 
 
@@ -65,11 +81,11 @@ void temprescale()
 void init(FILE* fin)
 {
     // input
-    fscanf(fin, "%f %f", &zpos, &ang_0);
+    fscanf(fin, "%f", &ang_0);
     fscanf(fin, "%f %f", &pot_lj_s, &pot_lj_e);
-    fscanf(fin, "%f %f", &pot_hs_k, &pot_hs_r);
+    fscanf(fin, "%f %f %f %f", &pot_hs_k, &pot_hs_r, &k2, &z0);
     fscanf(fin, "%d", &iseed);
-    fscanf(fin, "%f %f %f %f %f", &delt, &tmax, &temp, &tequil, &ztoler);
+    fscanf(fin, "%f %f %f %f", &delt, &tmax, &temp, &tequil);
     
     // more initializing
     srand(iseed);
@@ -84,7 +100,7 @@ void init(FILE* fin)
     ring1[2][0] = 0.0;
     ring2[0][0] = 0.0;
     ring2[1][0] = 0.0;
-    ring2[2][0] = zpos;
+    ring2[2][0] = z0;
     
     int i, j;
     for (i=1; i<=6; i++)
@@ -94,7 +110,7 @@ void init(FILE* fin)
         ring1[2][i] = 0.0;
         ring2[0][i] = alat * cos(ang_0 + ang_rot * (i-1));
         ring2[1][i] = alat * sin(ang_0 + ang_rot * (i-1));
-        ring2[2][i] = zpos;
+        ring2[2][i] = z0;
     }
     
     // initialize velocities
@@ -102,8 +118,8 @@ void init(FILE* fin)
     {
         for (j=0; j<3; j++)
         {
-            vring1[j][i] = randfrac() - 0.5;
-            vring2[j][i] = randfrac() - 0.5;
+            vring1[j][i] = randgauss();
+            vring2[j][i] = randgauss();
         }
     }
     
@@ -230,6 +246,21 @@ void force()
         }
     }
     
+    // central spring
+    float d12=0.0;
+    for (j=0; j<3; j++)
+    {
+        d12 += pow(ring1[j][0]-ring2[j][0], 2.0);
+    }
+    d12 = sqrt(d12);
+    v12 = k2 * pow(z0 - d12, 2.0);
+    fxring1[0] += 2.0 * k2 * (d12 - z0) * (ring2[0][0] - ring1[0][0]) / d12;
+    fxring2[0] += 2.0 * k2 * (d12 - z0) * (ring1[0][0] - ring2[0][0]) / d12;
+    fyring1[0] += 2.0 * k2 * (d12 - z0) * (ring2[1][0] - ring1[1][0]) / d12;
+    fyring2[0] += 2.0 * k2 * (d12 - z0) * (ring1[1][0] - ring2[1][0]) / d12;
+    fzring1[0] += 2.0 * k2 * (d12 - z0) * (ring2[2][0] - ring1[2][0]) / d12;
+    fzring2[0] += 2.0 * k2 * (d12 - z0) * (ring1[2][0] - ring2[2][0]) / d12;
+    
     // interactions between rings
     float d3, r3_6, r3_12, r3_8;
     for (i=0; i<=6; i++)
@@ -305,6 +336,49 @@ void write(FILE* ftraj)
     }
 }
 
+typedef  float ring_t[3][7] ;
+
+/* write trajectory to XSF files  for animation */
+void write_py(){
+    static FILE *fout;
+    static int cnt=0;
+    if(!cnt){
+        fout = fopen("mdring.py","w");
+        fprintf(fout, 
+                "#!/usr/bin/python\n"
+                "from ase import Atoms\n"
+                "from ase.io.trajectory import PickleTrajectory\n"
+                "from numpy import *\n"
+                "a=Atoms(\"C7O7\")\n"
+               );
+
+    }
+
+    fprintf(fout, "a.positions=[");
+    for(int j=0; j<7; j++)
+        fprintf(fout, "(%f,%f,%f),", ring1[0][j],
+                ring1[1][j], ring1[2][j]);
+
+    for(int j=0; j<7; j++){
+        fprintf(fout, "(%f,%f,%f)", ring2[0][j],
+                ring2[1][j], ring2[2][j]);
+        if(j<6)
+            fprintf(fout, ",");
+    }
+    fprintf(fout, "]\n");
+
+    if(!cnt++){
+
+        fprintf(fout,
+                "a.set_pbc(False)\n"
+                "a.center()\n"
+                "traj = PickleTrajectory('md.traj', 'w', a)\n"
+                );
+    }
+
+    fprintf(fout, "traj.write()\n");
+}
+
 /*
  Write energy
  */
@@ -353,9 +427,10 @@ int main(void)
         force();
         solve();
         
-        write(ftraj);
-        writeener(fener);
-        writep(fp);
+        //write(ftraj);
+        write_py();
+        //writeener(fener);
+        //writep(fp);
         
         time += delt;
         if (time < tequil)
